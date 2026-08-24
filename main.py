@@ -1,7 +1,14 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from init_db import init_db  
+import sqlite3
+from fastapi import FastAPI, HTTPException
+from init_db import DB_NAME, init_db
 
+def get_db_connection():
+  conn = sqlite3.connect(DB_NAME)
+  conn.row_factory = (
+      sqlite3.Row
+  )  # Enables accessing columns by name and dict conversion
+  return conn
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -12,27 +19,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@app.get("/")
-def root():
-  return {"name": "Task API (SQLite)", "version": "2.0"}
-
-
-# Your Stage 1, 2, 3... endpoints will go below here
-
-# INITIAL_TASKS = [
-#     {"id":1, "title":"study", "done":False},
-#     {"id":2, "title":"sleep", "done":True},
-#     {"id":3, "title":"exercise", "done":False}
-# ]
-
-# task_list = [
-#     {"id":1, "title":"study", "done":False},
-#     {"id":2, "title":"sleep", "done":True},
-#     {"id":3, "title":"exercise", "done":False}
-# ]
-
-# task_id_counter = 4
-
 # class TaskCreate(BaseModel):
 #     title: str
 
@@ -40,45 +26,49 @@ def root():
 #     title: Optional[str] = None
 #     done: Optional[bool] = None
 
-# @app.get("/", summary="Root Endpoint")
-# def root():
-#     """Return API name, version, and available endpoints."""
-#     return {
-#         "name" : "Task API",
-#         "version" : "1.0",
-#         "endpoints" : ["/tasks"]
-#     }
-
-# @app.get("/health", summary="Health check")
-# def health():
-#     """Check if the server is healthy and running."""
-#     return {"status": "ok"}
+@app.get("/health", summary="Health check")
+def health():
+    """Check if the server is healthy and running."""
+    return {"status": "ok"}
 
 
-# @app.get("/tasks", summary="Filter by query parameter if done is provided else List all tasks. Added search functionality as well.")
-# def get_task(done : Optional[bool] = None, search: Optional[str] = None):
-#     """Filter tasks based on the value of done. If no query parameter 
-#     passed then retrieve the full list of all tasks. Also you can search a task using a keyword and retrieve it."""
-#     results = task_list
-#     if done is not None:
-#         results = [t for t in results if t["done"] == done]
-#     if search is not None and search.strip():
-#         term = search.strip().lower()
-#         results = [t for t in results if term in t["title"].lower()]
+@app.get("/")
+def root():
+  return {"name": "Task API", "version": "2.0", "endpoints": ["/tasks"]}
 
-#     return results
 
-# @app.get("/tasks/{id}", summary="Get task by ID")
-# def get_task_by_id(id:int):
-#     """Retrieve a single task by its unique numeric ID."""
-#     task = next((t for t in task_list if t["id"] == id), None)
-#     if(task is not None):
-#         return task
-#     else:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND, 
-#             detail=f"error: Task {id} not found"
-#             )
+# 1. GET ALL TASKS
+@app.get("/tasks")
+def get_tasks():
+  with get_db_connection() as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, done FROM tasks")
+    rows = cursor.fetchall()
+
+    # Convert SQLite rows into clean Python dictionaries (with boolean 'done')
+    tasks = [
+        {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+        for row in rows
+    ]
+    return tasks
+
+
+# 2. GET SINGLE TASK BY ID
+@app.get("/tasks/{id}")
+def get_task(id: int):
+  with get_db_connection() as conn:
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, title, done FROM tasks WHERE id = ?", (id,)
+    ) 
+    row = cursor.fetchone()
+
+    if not row:
+      raise HTTPException(
+          status_code=404, detail={"error": "Task not found"}
+      )
+
+    return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
 
 # @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary="Create a new task")
 # def create_task(payload: TaskCreate):
