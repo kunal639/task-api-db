@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 import sqlite3
-from fastapi import FastAPI, HTTPException, status, Response
+from fastapi import FastAPI, HTTPException, status, Response, Query
 from init_db import DB_NAME, init_db
 from pydantic import BaseModel
 from typing import Optional
@@ -35,26 +35,45 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/")
+@app.get("/", summary="Root endpoint")
 def root():
   return {"name": "Task API", "version": "2.0", "endpoints": ["/tasks"]}
 
 
-@app.get("/tasks")
-def get_tasks():
+@app.get("/tasks", summary="List tasks with search, filter, and sorting")
+def get_tasks(
+    search: Optional[str] = Query(None, description="Search term for title"),
+    done: Optional[bool] = Query(None, description="Filter by done status"),
+    sort: Optional[str] = Query("id", description="Sort by 'title', 'id', or 'done'"),
+):
+  query = "SELECT id, title, done FROM tasks WHERE 1=1"
+  params = []
+
+  # 1. Search with SQL LIKE
+  if search:
+    query += " AND title LIKE ?"
+    params.append(f"%{search}%")
+
+  # 2. Filter with SQL WHERE
+  if done is not None:
+    query += " AND done = ?"
+    params.append(int(done))
+
+  # 3. Sort with SQL ORDER BY (whitelisting columns for safety)
+  allowed_sort_fields = {"id": "id", "title": "title", "done": "done"}
+  sort_field = allowed_sort_fields.get(sort, "id")
+  query += f" ORDER BY {sort_field} ASC"
+
   with get_db_connection() as conn:
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, done FROM tasks")
+    cursor.execute(query, params)
     rows = cursor.fetchall()
-
-    # Convert SQLite rows into clean Python dictionaries (with boolean 'done')
-    tasks = [
+    return [
         {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
         for row in rows
     ]
-    return tasks
 
-@app.get("/tasks/{id}")
+@app.get("/tasks/{id}", summary="Get tasks by ID")
 def get_task(id: int):
   with get_db_connection() as conn:
     cursor = conn.cursor()
@@ -163,26 +182,3 @@ def delete_task(id: int):
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-# @app.get("/stats", summary="Added stat endpoint")
-# def get_stats():
-#     """Added stat endpoint where total is the numner of task in task_list, done_count is the count
-#     of copmpleted task and open_ount is the count of incomplete task."""
-#     total = len(task_list)
-#     done_count = sum(1 for t in task_list if t["done"])
-#     open_count = total - done_count
-
-#     return {
-#         "total": total,
-#         "done": done_count,
-#         "open": open_count
-#     }
-
-# @app.post("/reset", summary="Added reset endpoint to reset the task_list back to what it originally had")
-# def reset_tasks():
-#     """Added a reset endpoint to roll back task_list"""
-#     global task_list, task_id_counter
-    
-#     task_list = [task.copy() for task in INITIAL_TASKS]
-#     task_id_counter = 4
-
-#     return {"message": "Tasks reset to initial state", "tasks": task_list}
