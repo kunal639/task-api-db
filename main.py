@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 import sqlite3
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Response
 from init_db import DB_NAME, init_db
 from pydantic import BaseModel
+from typing import Optional
 
 def get_db_connection():
   conn = sqlite3.connect(DB_NAME)
@@ -23,9 +24,10 @@ app = FastAPI(lifespan=lifespan)
 class TaskCreate(BaseModel):
     title: str
     done: bool = False
-# class TaskUpdate(BaseModel):
-#     title: Optional[str] = None
-#     done: Optional[bool] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    done: Optional[bool] = None
 
 @app.get("/health", summary="Health check")
 def health():
@@ -38,7 +40,6 @@ def root():
   return {"name": "Task API", "version": "2.0", "endpoints": ["/tasks"]}
 
 
-# 1. GET ALL TASKS
 @app.get("/tasks")
 def get_tasks():
   with get_db_connection() as conn:
@@ -53,8 +54,6 @@ def get_tasks():
     ]
     return tasks
 
-
-# 2. GET SINGLE TASK BY ID
 @app.get("/tasks/{id}")
 def get_task(id: int):
   with get_db_connection() as conn:
@@ -92,52 +91,77 @@ def create_task(payload: TaskCreate):
         )
         conn.commit()
 
-        # 2. Retrieve the auto-generated ID from SQLite
         new_id = cursor.lastrowid
 
-    # 3. Return the created task object
     return {
         "id": new_id,
         "title": clean_title,
         "done": payload.done
     }
     
-# @app.put("/tasks/{id}", summary="Update task title and/or done using its ID")
-# def update_task(id: int, task_data: TaskUpdate):
-#     """Updates the title and/or done property of an existing task using its ID if it exists."""
-#     task = next((t for t in task_list if t["id"] == id), None)
-#     if task is None:
-#         raise HTTPException(status_code=404, detail="Unknown Id.")
+@app.put("/tasks/{id}", summary="Update task title and/or done property using its ID")
+def update_task(id: int, task_data: TaskUpdate):
+  # 1. Validate: Reject empty payload
+  if task_data.title is None and task_data.done is None:
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Request body cannot be empty.",
+    )
 
-#     # Reject empty payload
-#     if task_data.title is None and task_data.done is None:
-#         raise HTTPException(status_code=400, detail="Request body cannot be empty.")
+  # 2. Validate: Title cannot be an empty string if provided
+  if task_data.title is not None and not task_data.title.strip():
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST, detail="Title cannot be empty."
+    )
 
-#     if task_data.title is not None:
-#         if not task_data.title.strip():
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail="Title cannot be empty."
-#             )
-#         task["title"] = task_data.title.strip()
+  with get_db_connection() as conn:
+    cursor = conn.cursor()
 
-#     if task_data.done is not None:
-#         task["done"] = task_data.done
+    # Check if task exists
+    cursor.execute("SELECT id, title, done FROM tasks WHERE id = ?", (id,))
+    current_task = cursor.fetchone()
 
-#     return task   
+    if not current_task:
+      raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Id."
+      )
 
-# @app.delete("/tasks/{id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a task using its ID")
-# def delete_task(id: int):
-#     """Delete a task using its ID if it exists."""
-#     task = next((t for t in task_list if t["id"] == id), None)
-#     if task is None:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND, 
-#             detail="Unknown Id."
-#         )
+    # Determine updated values (retain current value if None)
+    new_title = (
+        task_data.title.strip()
+        if task_data.title is not None
+        else current_task["title"]
+    )
+    new_done = (
+        int(task_data.done)
+        if task_data.done is not None
+        else current_task["done"]
+    )
 
-#     task_list.remove(task)
-#     return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Run SQL UPDATE
+    cursor.execute(
+        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        (new_title, new_done, id),
+    )
+    conn.commit()
+
+    return {"id": id, "title": new_title, "done": bool(new_done)}
+
+@app.delete("/tasks/{id}",status_code=status.HTTP_204_NO_CONTENT,summary="Delete a task using its ID")
+def delete_task(id: int):
+  with get_db_connection() as conn:
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM tasks WHERE id = ?", (id,))
+    if not cursor.fetchone():
+      raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Id."
+      )
+
+    cursor.execute("DELETE FROM tasks WHERE id = ?", (id,))
+    conn.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # @app.get("/stats", summary="Added stat endpoint")
 # def get_stats():
