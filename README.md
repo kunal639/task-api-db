@@ -61,7 +61,7 @@ The database can be inspected using any viewer (e.g., DB Browser for SQLite or V
 
 The database can be inspected using any viewer (e.g., DB Browser for SQLite or VS Code's SQLite Viewer).
 
-![Database Screenshot](./db_view.png)
+![Database Screenshot](./db_view.PNG)
 
 ### Example SQL Query Executed
 
