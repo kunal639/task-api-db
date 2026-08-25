@@ -182,3 +182,16 @@ def delete_task(id: int):
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+@app.get("/stats", summary="Get task statistics")
+def get_stats():
+  with get_db_connection() as conn:
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) AS total, SUM(done) AS done FROM tasks")
+    row = cursor.fetchone()
+
+    total = row["total"] or 0
+    done_count = row["done"] or 0
+    open_count = total - done_count
+
+    return {"total": total, "done": done_count, "open": open_count}
