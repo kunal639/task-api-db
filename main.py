@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 import sqlite3
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from init_db import DB_NAME, init_db
+from pydantic import BaseModel
 
 def get_db_connection():
   conn = sqlite3.connect(DB_NAME)
@@ -19,9 +20,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-# class TaskCreate(BaseModel):
-#     title: str
-
+class TaskCreate(BaseModel):
+    title: str
+    done: bool = False
 # class TaskUpdate(BaseModel):
 #     title: Optional[str] = None
 #     done: Optional[bool] = None
@@ -70,27 +71,36 @@ def get_task(id: int):
 
     return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
 
-# @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary="Create a new task")
-# def create_task(payload: TaskCreate):
-#     """Create a new task with a title and default 'done' status as false."""
-#     global task_id_counter
+@app.post("/tasks", status_code=status.HTTP_201_CREATED, summary="Create a new task")
+def create_task(payload: TaskCreate):
+    # Validation: title cannot be empty or just whitespace
+    if not payload.title or not payload.title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Title is required and cannot be empty"},
+        )
 
-#     if not payload.title or not payload.title.strip():
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail="Title is required and cannot be empty",
-#         )
+    clean_title = payload.title.strip()
 
-#     new_task = {
-#         "id": task_id_counter,
-#         "title": payload.title.strip(),
-#         "done": False,
-#     }
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Insert into database
+        cursor.execute(
+            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            (clean_title, int(payload.done))
+        )
+        conn.commit()
 
-#     task_list.append(new_task)
-#     task_id_counter += 1
+        # 2. Retrieve the auto-generated ID from SQLite
+        new_id = cursor.lastrowid
 
-#     return new_task
+    # 3. Return the created task object
+    return {
+        "id": new_id,
+        "title": clean_title,
+        "done": payload.done
+    }
     
 # @app.put("/tasks/{id}", summary="Update task title and/or done using its ID")
 # def update_task(id: int, task_data: TaskUpdate):
